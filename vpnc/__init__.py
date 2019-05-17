@@ -22,12 +22,42 @@ Usage:
 """
 from __future__ import print_function
 
+import signal
 import sys
 import os
 import subprocess
 from contextlib import contextmanager
 
 HERE = os.path.dirname(os.path.realpath(__file__))
+
+
+class ProcessException(Exception):
+    def __init__(self, returncode, cmd, stdout, stderr):
+        self.returncode = returncode
+        self.cmd = cmd
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def __str__(self):
+        if self.returncode and self.returncode < 0:
+            try:
+                return "Command '%s' died with %r." % (
+                    self.cmd, signal.Signals(-self.returncode))
+            except ValueError:
+                return "Command '%s' died with unknown signal %d." % (
+                    self.cmd, -self.returncode)
+        else:
+            return "Command '%s' returned non-zero exit status %d." % (
+                self.cmd, self.returncode)
+
+
+def process_call(cmd):
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    stdout, stderr = process.communicate()
+    if process.returncode:
+        raise ProcessException(process.returncode, process.args, stdout, stderr)
+
+    return process.returncode, stdout, stderr
 
 
 class VPNC(object):
@@ -61,14 +91,14 @@ class VPNC(object):
         """Moves the VPNC config file to /etc/vpnc (Linux) or
         /usr/local/etc/vpnc/ (OSX).
         """
-        subprocess.check_call(["mv", self.temp_config_path, self.config_folder])
-        subprocess.check_call(["chown", "root:root", self.config_path])
-        subprocess.check_call(["chmod", "600", self.config_path])
+        process_call(["mv", self.temp_config_path, self.config_folder])
+        process_call(["chown", "root:root", self.config_path])
+        process_call(["chmod", "600", self.config_path])
 
     def remove_config_file(self):
         """Removes the auto-generated VPNC config file."""
         try:
-            subprocess.check_output(["rm", self.config_path])
+            process_call(["rm", self.config_path])
             return True
         except subprocess.CalledProcessError:
             return False
@@ -77,11 +107,11 @@ class VPNC(object):
         """Connects to VPNC."""
         self.create_config_file()
         self.move_config_file()
-        subprocess.check_output(["vpnc", "tempvpnc"], env=os.environ, stderr=subprocess.PIPE)
+        process_call(["vpnc", "tempvpnc"])
 
     def disconnect(self):
         """Disconnects from VPNC."""
-        subprocess.call(["vpnc-disconnect"])
+        process_call(["vpnc-disconnect"])
         self.remove_config_file()
 
     @contextmanager
